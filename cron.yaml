@@ -1,0 +1,4 @@
+cron:
+- description: the timer
+  url: /timer
+  schedule: every 1 minutes synchronized

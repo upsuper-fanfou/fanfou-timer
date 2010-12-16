@@ -1,0 +1,20 @@
+application: fanfou-timer
+version: 1
+runtime: python
+api_version: 1
+
+handlers:
+- url: /
+  script: main.py
+  login: required
+
+- url: /users(/.*)?
+  script: users.py
+  login: required
+
+- url: /plans(/.*)?
+  script: plans.py
+  login: required
+
+- url: /timer
+  script: timer.py

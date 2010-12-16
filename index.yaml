@@ -1,0 +1,24 @@
+indexes:
+
+- kind: User
+  properties:
+  - name: owner
+  - name: user_id
+
+- kind: Plan
+  properties:
+  - name: user
+  - name: plan_time
+    direction: desc
+
+- kind: Plan
+  properties:
+  - name: user
+  - name: result
+  - name: exec_time
+    direction: desc
+
+- kind: Plan
+  properties:
+  - name: exec_time
+  - name: plan_time

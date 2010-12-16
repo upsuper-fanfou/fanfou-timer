@@ -1,0 +1,38 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+<head>
+	<meta http-equiv="Content-Type" content="text/html;charset=UTF-8" />
+	<title></title>
+</head>
+<body>
+    <table>
+        <tr>
+            <td colspan="4"><a href="/users/add">添加用户</a></td>
+        </tr>
+        {% for user in users %}
+        <tr>
+            <td colspan="2">{{ user.user_id }}</td>
+            <td><a href="/plans/add/{{ user.user_id }}">添加计划</a></td>
+            <td>
+                <a href="/users/edit/{{ user.user_id }}">编辑</a>
+                <a href="/users/delete/{{ user.user_id }}">删除</a>
+            </td>
+        </tr>
+        {% for plan in user.plans %}
+        <tr>
+            <td colspan="4">{{ plan.status }}</td>
+        </tr>
+        <tr>
+            <td>计划时间：{{ plan.plan_time }}</td>
+            <td>执行时间：{% if plan.exec_time %}{{ plan.exec_time }}{% else %}等待执行{% endif %}</td>
+            <td>执行结果：{% ifequal plan.result None %}从未执行过{% endifequal %}{% ifequal plan.result 0 %}执行成功{% endifequal %}{% ifequal plan.result 1 %}用户名或密码错误{% endifequal %}{% ifequal plan.result 2 %}执行失败，等待下一次{% endifequal %}{% ifequal plan.result 99 %}其他错误{% endifequal %}</td>
+            <td>
+                <a href="/plans/edit/{{ plan.key }}">编辑</a>
+                <a href="/plans/delete/{{ plan.key }}">删除</a>
+            </td>
+        </tr>
+        {% endfor %}
+        {% endfor %}
+    </table>
+</body>
+</html>
