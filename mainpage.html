@@ -1,0 +1,664 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=UTF-8" />
+<title>按时吃饭</title>
+<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.5.0/jquery.min.js"></script>
+<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.8.9/jquery-ui.min.js"></script>
+<script type="text/javascript" src="static/jquery-ui-timepicker.js"></script>
+<link rel="stylesheet" href="http://ajax.googleapis.com/ajax/libs/jqueryui/1.8.9/themes/start/jquery-ui.css" type="text/css" media="all" />
+<script type="text/javascript">
+    var current_user_id;
+    var refresh_plans = 0;
+    Date.prototype.dateString = function() {
+        var year = this.getFullYear();
+        var month = this.getMonth() + 1;
+        var date = this.getDate();
+        if (month < 10) month = '0' + month;
+        if (date < 10) date = '0' + date;
+        return year + '-' + month + '-' + date;
+    };
+    Date.prototype.timeString = function() {
+        var hour = this.getHours();
+        var minute = this.getMinutes();
+        if (hour < 10) hour = '0' + hour;
+        if (minute < 10) minute = '0' + minute;
+        return hour + ':' + minute;
+    };
+    function listUsers(users) {
+        var $list = $('#user_list');
+        $('li.user').remove();
+        var $add_user = $('#user_list li:last-child');
+        for (var i = 0; i < users.length; ++i) {
+            var user = users[i];
+            var $li = $('<li>');
+            $li.attr('id', 'user_' + user.user_id);
+            $li.addClass('user');
+            var $a = $('<a>');
+            $a.attr('href', '#user/' + user.user_id);
+            $a.text(user.name);
+            var $em = $('<em>');
+            $em.text(user.user_id);
+            $a.append($em);
+            $a.click((function(user_id) {
+                return function() {
+                    showCovering();
+                    $('#loading').show();
+                    $.get('/plans/' + encodeURIComponent(user_id),
+                        function(data) {
+                            switchUser(user_id, data);
+                            $('#loading').hide();
+                            hideCovering();
+                        }, 'json');
+                };
+            })(user.user_id));
+            $li.append($a);
+            $li.insertBefore($add_user);
+        }
+    }
+    function getDefaultDateTime() {
+        var dt = new Date();
+        var time = dt.getTime();
+        time += 600000;
+        dt.setTime(time);
+        return dt;
+    }
+    function getInterval(minutes) {
+        if (minutes == 0) {
+            return { cycle: false, text: '不循环' };
+        } else {
+            var ret = { cycle: true };
+            if (minutes % 10080 == 0) {
+                ret.unit = 10080; ret.name = '周';
+            } else if (minutes % 1440 == 0) {
+                ret.unit = 1440; ret.name = '天';
+            } else if (minutes % 60 == 0) {
+                ret.unit = 60; ret.name = '小时';
+            } else {
+                ret.unit = 1; ret.name = '分钟';
+            }
+            ret.num = minutes / ret.unit;
+            ret.text = '循环：每' + ret.num + ret.name;
+            return ret;
+        }
+    }
+    function showEditPlan(plan, user_id) {
+        $('.dialog').hide();
+        var $editplan = $('#dialog_editplan');
+        $('[name=status]', $editplan).val(plan.status);
+        var plan_time = plan.plan_time.split(' ');
+        $('[name=date]', $editplan).val(plan_time[0]);
+        $('[name=time]', $editplan).val(plan_time[1]);
+        $('[name=interval]', $editplan).val(plan.interval);
+        var interval = getInterval(plan.interval);
+        $('[name=interval_text]', $editplan).val(interval.text);
+        $editplan.data('plan', plan);
+        $editplan.data('user_id', user_id);
+        showCovering();
+        $editplan.show();
+        $('textarea', $editplan).focus();
+    }
+    function switchUser(user_id, plans) {
+        $('#user_list li.user.selected').removeClass('selected');
+        if (refresh_plans) {
+            clearTimeout(refresh_plans);
+            refresh_plans = 0;
+        }
+        $('#user_' + user_id).addClass('selected');
+        current_user_id = user_id;
+        var $plans = $('#plans');
+        $plans.empty();
+        var execed = 0, waiting = 0, error = 0;
+        var next_plan_time = '';
+        for (var i = 0; i < plans.length; ++i) {
+            var plan = plans[i];
+            var $div = $('<div>');
+            $div.attr('id', 'plan_' + plan.plan_id);
+            $div.addClass('plan');
+            var $status = $('<p>');
+            $status.addClass('status');
+            $status.text(plan.status);
+            $div.append($status);
+            var $result = $('<p>');
+            $result.addClass('result');
+            if (plan.result === null || plan.exec_time == null) {
+                $div.addClass('waiting');
+                ++waiting;
+                var interval = getInterval(plan.interval);
+                $result.html('将于 <span class="time">' +
+                        plan.plan_time + '</span> ' + 
+                        (interval.cycle ?
+                         '以及 <span class="time">接下来的' + interval.text +
+                         '</span> ' : '') + '发送');
+                next_plan_time = plan.plan_time;
+            } else if (plan.result !== 0) {
+                $div.addClass('error');
+                ++error;
+                switch (plan.result) {
+                    case 1: reason = '用户名或密码错误'; break;
+                    case 2: reason = '执行失败'; break;
+                    default: reason = '未知错误'; break;
+                }
+                $result.html('于 <span class="time">' +
+                        plan.exec_time + '</span> 发送时发生错误：' +
+                        reason);
+            } else {
+                $div.addClass('execed');
+                ++execed;
+                $result.html('已于 <span class="time">' +
+                        plan.exec_time + '</span> 发送');
+            }
+            $div.append($result);
+            var $manage = $('<p>');
+            $manage.addClass('manage');
+            if ($div.hasClass('waiting')) {
+                var $edit = $('<a>');
+                $edit.attr('href', '#plan/' + plan.plan_id);
+                $edit.text('编辑');
+                $edit.click((function(plan, user_id) {
+                    return function() {
+                        showEditPlan(plan, user_id);
+                    }
+                })(plan, current_user_id));
+                $edit.appendTo($manage);
+            }
+            var $delete = $('<a>');
+            $delete.attr('href', '#plan/' + plan.plan_id + '/delete');
+            $delete.click((function(plan, user_id) {
+                return function() {
+                    if (plan.result || confirm('确认要删除这条计划吗？')) {
+                        showCovering();
+                        $('#loading').show();
+                        $.post('/plan/delete', { 'plan_id': plan.plan_id },
+                            function(data) {
+                                switchUser(user_id, data);
+                                $('#loading').hide();
+                                hideCovering();
+                            }, 'json');
+                    }
+                };
+            })(plan, current_user_id));
+            $delete.text('删除');
+            $delete.appendTo($manage);
+            $div.append($manage);
+            $plans.append($div);
+        }
+        var $stat = $('#stat');
+        $('h2 span', $stat).text(plans.length);
+        $('.execed', $stat).text(execed);
+        $('.waiting', $stat).text(waiting);
+        $('.error', $stat).text(error);
+        if (next_plan_time) {
+            var refresh_time = new Date(next_plan_time.replace(' ', 'T'));
+            var delta = refresh_time.getTime() - (new Date()).getTime();
+            if (isNaN(delta)) delta = 0;
+            if (delta < 30000) delta = 30000;
+            delta += 30000;
+            if (delta > 3600000) delta = 3600000;
+            refresh_plans = setTimeout(function() {
+                refresh_plans = 0;
+                $('#user_' + user_id + ' > a').click();
+            }, delta);
+        }
+    }
+    function showCovering() { $('#covering').fadeIn('fast'); }
+    function hideCovering() { $('#covering').fadeOut('fast'); }
+    $(function() {
+        var date_opt = {
+            dateFormat: 'yy-mm-dd',
+            minDate: new Date(),
+            monthNames: ['01月', '02月', '03月', '04月', '05月',
+                         '06月', '07月', '08月', '09月', '10月',
+                         '11月', '12月'],
+            dayNamesMin: ['日', '一', '二', '三', '四', '五', '六'],
+            showMonthAfterYear: true,
+            yearSuffix: '年'
+        };
+        var time_opt = {
+            timeOnlyTitle: '选择时间',
+            timeText: '时间',
+            hourText: '时',
+            minuteText: '分',
+            currentText: '现在',
+            closeText: '确定'
+        };
+        var $addplan = $('#add_plan');
+        var datetime = getDefaultDateTime();
+        $('[name=date]', $addplan).val(datetime.dateString());
+        $('[name=date]', $addplan).datepicker(date_opt);
+        $('[name=time]', $addplan).val(datetime.timeString());
+        $('[name=time]', $addplan).timepicker(time_opt);
+        $('button', $addplan).click(function() {
+            $('#loading').show();
+            showCovering();
+            $.post('/plan/add', {
+                'user_id': current_user_id,
+                'status': $('[name=status]', $addplan).val(),
+                'plan_time': $('[name=date]', $addplan).val() + ' '+
+                             $('[name=time]', $addplan).val(),
+                'interval': $('[name=interval]', $addplan).val()
+            }, function(data) {
+                switchUser(current_user_id, data);
+                $('[name=status]', $addplan).val('');
+                $('#loading').hide();
+                hideCovering();
+            }, 'json');
+        });
+        var $status_tips = $('[name=status] + div');
+        setInterval(function() {
+            $status_tips.each(function() {
+                var $this = $(this);
+                var text = 140 - $this.prev().val().length;
+                if ($this.text() != text)
+                    $this.text(text);
+            });
+        }, 50);
+        $('.dialog > .close > a').click(function() {
+            $(this).parents('.dialog').hide();
+            window.location.hash = '';
+            hideCovering();
+        });
+        $('.dialog').keypress(function(event) {
+            if (event.keyCode == 13) {
+                $('button:last', this).click();
+            }
+        });
+        $('.popup').click(function(event) { event.stopPropagation(); });
+        $(document).click(function() { $('.popup').hide(); });
+        var $interval_editor = $('#popup_interval');
+        $('.plan_editor [name=interval_text]').click(function(event) {
+            event.stopPropagation();
+            var $this = $(this);
+            var $popup = $interval_editor;
+            $('[name=interval_type]', $popup).removeAttr('checked');
+            $('option', $popup).removeAttr('selected');
+            var $interval = $this.siblings('[name=interval]');
+            var interval = getInterval($interval.val());
+            if (interval.cycle) {
+                $('[value=yes]', $popup).attr('checked', 'checked');
+                $('[name=number]', $popup).val(interval.num);
+                $('option[value=' + interval.unit + ']', $popup).attr(
+                    'selected', 'selected');
+            } else {
+                $('[value=no]', $popup).attr('checked', 'checked');
+                $('[name=number]', $popup).val(0);
+                $('option[value=60]', $popup).attr('selected', 'selected');
+            }
+            $popup.data('input', $this);
+            $popup.data('interval', $interval);
+            var offset = $this.offset();
+            $popup.show();
+            $popup.offset({
+                left: offset.left,
+                top: offset.top + $this.outerHeight() + 5
+            });
+        });
+        $('input[type=text], select', $interval_editor).focus(function() {
+            $('[value=no]', $interval_editor).removeAttr('checked');
+            $('[value=yes]', $interval_editor).attr('checked', 'checked');
+        });
+        $('button', $interval_editor).click(function() {
+            var $popup = $interval_editor;
+            var interval = 0;
+            if ($('[name=interval_type]:checked', $popup).val() == 'yes') {
+                var num = parseInt($('[name=number]', $popup).val());
+                if (isNaN(num)) num = 0;
+                var unit = $('[name=unit]', $popup).val();
+                interval = num * unit;
+            } else {
+                interval = 0;
+            }
+            $popup.data('interval').val(interval);
+            $popup.data('input').val(getInterval(interval).text);
+            $popup.hide();
+        });
+        var $adduser = $('#dialog_adduser');
+        $('#user_list > li:last-child > a').click(function() {
+            $('.dialog').hide();
+            $('[name=userid]', $adduser).val('');
+            $('[name=password]', $adduser).val('');
+            showCovering();
+            $adduser.show();
+            $('input:first', $adduser).focus();
+        });
+        $('button', $adduser).click(function() {
+            $('#loading').show();
+            $.post('/user/add', {
+                user_id: $('[name=userid]', $adduser).val(),
+                password: $('[name=password]', $adduser).val()
+            }, function(data) {
+                if (data.error) {
+                    alert(data.reason);
+                } else {
+                    listUsers(data.users);
+                    switchUser(data.user_id, data.plans);
+                    $('#main').show();
+                    $adduser.hide();
+                    window.location.hash = '';
+                    hideCovering();
+                }
+                $('#loading').hide();
+            }, 'json');
+        });
+        var $editplan = $('#dialog_editplan');
+        $('[name=date]', $editplan).datepicker(date_opt);
+        $('[name=time]', $editplan).timepicker(time_opt);
+        $('button', $editplan).click(function() {
+            $('#loading').show();
+            $editplan.hide();
+            var plan = $editplan.data('plan');
+            var user_id = $editplan.data('user_id');
+            $.post('/plan/edit', {
+                'plan_id': plan.plan_id,
+                'status': $('[name=status]', $editplan).val(),
+                'plan_time': $('[name=date]', $editplan).val() + ' ' +
+                             $('[name=time]', $editplan).val(),
+                'interval': $('[name=interval]', $editplan).val()
+            }, function(data) {
+                switchUser(user_id, data);
+                window.location.hash = '';
+                $('#loading').hide();
+                hideCovering();
+            }, 'json');
+        });
+        var $edituser = $('#dialog_edituser');
+        $('#manage > a').click(function() {
+            $('.dialog').hide();
+            $('[name=userid]', $edituser).val(current_user_id);
+            $('[name=password]', $edituser).val('');
+            showCovering();
+            $edituser.show();
+            $('[name=password]', $edituser).focus();
+        });
+        $('button:eq(0)', $edituser).click(function() {
+            if (! confirm('删除后所有计划数据都将被永久删除，确认删除这个账户吗？'))
+                return;
+            $edituser.hide();
+            $('#loading').show();
+            $.post('/user/delete', { user_id: current_user_id },
+                function(data) {
+                    listUsers(data.users);
+                    if (data.users.length) {
+                        switchUser(data.users[0].user_id, data.plans);
+                        window.location.hash = '';
+                        $('#main').show();
+                        hideCovering();
+                    } else {
+                        $('#main').hide();
+                        $('#user_list > li:last-child > a').click();
+                    }
+                    $('#loading').hide();
+                }, 'json');
+        });
+        $('button:eq(1)', $edituser).click(function() {
+            $('#loading').show();
+            $.post('/user/edit', {
+                old_user_id: current_user_id,
+                user_id: $('[name=userid]', $edituser).val(),
+                password: $('[name=password]', $edituser).val()
+            }, function(data) {
+                if (data.error) {
+                    alert(data.reason);
+                } else {
+                    listUsers(data.users);
+                    switchUser(data.user_id, data.plans);
+                    window.location.hash = '';
+                    $edituser.hide();
+                    hideCovering();
+                }
+                $('#loading').hide();
+            }, 'json');
+        });
+        $.get('/main', function(data) {
+            var default_users = data[0];
+            var default_plans = data[1];
+            listUsers(default_users);
+            if (default_users.length) {
+                switchUser(default_users[0].user_id, default_plans);
+                $('#main').show();
+                hideCovering();
+            } else {
+                $('#main').hide();
+                $('#user_list > li:last-child > a').click();
+            }
+            $('#loading').hide();
+        }, 'json');
+    });
+</script>
+<style type="text/css">
+    /* Reset */
+    html, body, div, span, h1, h2, p, a, em, ol, ul, li, textarea, input, button { margin: 0; padding: 0; border: 0; outline: 0; font: normal 100% sans-serif; vertical-align: baseline; text-decoration: none; line-height: 1; }
+    ol, ul, li { list-style: none; } :active, :focus { outline: 0; }
+
+    /* Common style */
+    button {
+        color: #555; font-size: 16px; cursor: pointer;
+        width: 108px; height: 39px;
+        border: 1px solid #ccc; border-radius: 9px;
+        background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAABvCAYAAAAt66qjAAAAAXNSR0IArs4c6QAAAAZiS0dEAP8A/wD/oL2nkwAAAAlwSFlzAAALEwAACxMBAJqcGAAAAAd0SU1FB9sCDww6BcpX1ugAAAAZdEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVBXgQ4XAAAARUlEQVQoz62OOwoAIAxDU+9/4JIlDgp+kaIuoXlNSuHuSgBQRBI6G2Vn+6cxMpDUvH1+PCCXB1qOZJ3MbMkF2Nn+aWxYBn4RO4s1fOsnAAAAAElFTkSuQmCC) repeat-x 0 0;
+    }
+    button:hover { background-position: 0 -37px; opacity: 1; }
+    button:active { background-position: 0 -74px; opacity: 1; }
+    input[type=text], input[type=password] {
+        border: 1px solid #999; border-radius: 5px;
+    }
+
+    /* Page */
+    body { font-size: 14px; line-height: 22px; overflow-y: scroll; }
+    #page { width: 662px; margin: 0 auto; }
+    #main { margin: 0 0 0 122px; }
+
+    /* Header */
+    #header { width: 100%; margin: 53px 0 34px; }
+    #header > h1 { text-indent: -900em; height: 65px; background: url(static/logo.png) no-repeat 106px 0; }
+
+    /* User List */
+    #user_list { float: left; width: 102px; border-right: 10px solid #999; padding-bottom: 140px; }
+    #user_list > li { margin-bottom: 5px; cursor: pointer; overflow: hidden; }
+    #user_list > li > a { display: block; width: 100%; height: 100%; }
+    #user_list > li.user { background: #ddd; border-radius: 9px 0 0 9px; height: 73px; }
+    #user_list > li.user > a { color: #aaa; padding: 15px 10px; font-weight: bold;}
+    #user_list > li.user > a > em { font-weight: normal; display: block; margin-top: 10px; font-size: 13px; }
+    #user_list > li.user.selected, #user_list > li.user:hover { background: #999; }
+    #user_list > li.user.selected > a, #user_list > li.user > a:hover { color: #fff; }
+    #user_list > li:last-child {
+        width: 36px; height: 36px; margin-left: 61px; text-indent: -900em;
+    }
+    #user_list > li:last-child > a {
+        border-radius: 9px;
+        background: #0cf url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABMAAAATBAMAAACAfiv/AAAAAXNSR0IArs4c6QAAABtQTFRFHtL/PNj/ZuD/iuj/0vb/iuj/////////////HWlliwAAAAF0Uk5TAEDm2GYAAAABYktHRACIBR1IAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH2wIPDg8ux145cAAAABl0RVh0Q29tbWVudABDcmVhdGVkIHdpdGggR0lNUFeBDhcAAAAoSURBVAjXY2AAgvQCBhioaKASM728vLyjHUgUMFR0QEEDMpOqtiGYAGERHoBg8ggxAAAAAElFTkSuQmCC) no-repeat 9px 9px;
+    }
+    #user_list > li:last-child > a:hover { background-color: #3df; }
+
+    /* Plan Editor */
+    .plan_editor textarea {
+        display: block; border: 1px solid #999; border-radius: 10px;
+        padding: 7px 9px; width: 520px; height: 56px; overflow: hidden;
+    }
+    .plan_editor textarea + div {
+        background-color: #ddd; border-radius: 10px 0 10px 0;
+        border-right: 1px solid #999; border-bottom: 1px solid #999;
+        margin: -22px 0 8px 498px; height: 20px; width: 37px;
+        color: #555; line-height: 20px; text-align: center;
+        padding: 1px 0 0 4px;
+    }
+    .plan_editor input {
+        float: left; height: 25px; padding: 0 0 0 30px; margin-right: 16px;
+        line-height: 30px; font-size: 16px; color: #999; cursor: pointer; border: 0;
+        background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABkAAABKCAAAAABrmKDmAAAAAXNSR0IArs4c6QAAAAlwSFlzAAALEwAACxMBAJqcGAAAAAd0SU1FB9sCDw4lLqg19VgAAAAZdEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVBXgQ4XAAAAAmJLR0QA/4ePzL8AAANPSURBVDjLnZXrT9pQGIf7jy5LSOqq4GUBEVlHhqxWrGDolAljg5kGnXF4QU2UsTlveI+6KdN6nSTGXSTOCxJsu7e05XLGpz0f3v7OeTg9tOcNYFKerS1JQ4vYf5ntMLC1FdZQ4jYYTmZzk9NQI5jeyoAZrQyYQGXA+CoDprs7BaClG4zHcwqgxQPG5foOoMUFxuk8AdDiBENVBozdfgSgxQ6GJA8BtJBgLJYDAC0WMCbTPoAWE5iGyoAxGPYAtBjAEMQugBYCDI5/A9CCg9Hp5IgWHZiHlQETfVCJqNZVQCbF83wqUxhrZj+mNlVsv8ycj3FFxs6LhufkPoolEomYHDheM3vBYJDbuMt/8m6Dg1FSMWdvAoGhq8LOV0OBwOsz2QiDPt9gTp5b8a3Il5w8IYBJer1+ZUWPt0dZ5fd6k2D6WHZFuQ/LskpYZtk+Cbt0uz3K5pLb7VbCncftvsR4hhlQ92YYRk0DDMNjSzQ9ro5pmlbTOE0vYXMOR1wdOxyOESV9dDhmsXmbbVg1EZvNFsmnYZttHtuxWn2qEQatVmtUTj6rdQe7MJubbjT1zmwm4XrTZDZfYFKn0ahtJAkR4xhc4kZjJzzpYn19Y1oqJd1UX78ovzdKr2/Llohsm15Pye9N4vUEQRdXpWmCqE4q5zOL43jdxHV+/nqiDkZx7UxncB3QEeJCHXLAZ4p9sNtc0mnNu2W9M02pjUZNI10lSZfr8cn4+uU//SaJuYv9Pf40nRMRI55+jkbeR4aj82dimfk92a81Yv+HdIm5jfb2hocWVlfnhsKQ9oomM9U/fqSsPp4IBUPHxbtlfxa+k7gcDLz9kTfZjFTOst83kn+jiSnE3Ee6vcdgUi8924g67PLA72hmwOXyl5+cJAZdr26x2Xan0xlBFk042ROMbaWoVma9dF64n6Y6vmD3yXb7zL1QatboFru9BZNOaXIEuRlHkuRTTMowFlYoN79oi8UPzxMyNSWRRUumJwdgvj5ueJFFVEj+X5AEj6F2FDHXt/k3etJA1A6LhdmTq+L5LFXhj54vqH9mHSb2T8GIiWqdjrB09g0GmiGRFyWnfURVae1W9YwXy3pnrbPRUFNT29i1mkO6Ssgcf5qKzaXutKf+CytLyKnHzMxpAAAAAElFTkSuQmCC) no-repeat;
+    }
+    .plan_editor input:hover {
+        background: url(data:image/png;base64,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) no-repeat;
+    }
+    .plan_editor input[name='date'] { width: 12ex; }
+    .plan_editor input[name='time'] { background-position: 0 -25px; width: 6ex; }
+    .plan_editor input[name='interval_text'] { background-position: 0 -50px; width: 16ex; margin: 0; }
+    .plan_editor button { float: right; }
+
+    /* Stat */
+    #stat { margin-top: 78px; padding-bottom: 10px; border-bottom: 1px solid #ddd; }
+    #stat > h2 { font-size: 18px; color: #555; }
+    #stat > h2 > span { color: #0ac; font-weight: bold; }
+    #stat > p { float: right; margin-top: -18px; color: #555; }
+    #stat > p > .execed { color: #999; font-weight: bold; }
+    #stat > p > .waiting { color: #0ac; font-weight: bold; }
+
+    /* Plans */
+    #plans { color: #333; }
+    #plans > .plan { padding: 11px 7px 13px; border-bottom: 1px solid #ddd; }
+    #plans > .plan > .status { line-height: 24px; }
+    #plans > .plan > .result { font-size: 12px; margin-top: 8px; }
+    #plans > .plan.waiting > .result,
+    #plans > .plan.waiting > .manage > a { color: #0ac; }
+    #plans > .plan.execed > .result,
+    #plans > .plan.execed > .manage > a { color: #999; }
+    #plans > .plan.waiting > .result > span,
+    #plans > .plan.execed > .result > span { font-weight: bold; }
+    #plans > .plan > .manage { float: right; margin-top: -14px; font-size: 12px; }
+    #plans > .plan > .manage > a { text-decoration: underline; margin-left: .5em; }
+
+    /* Manage */
+    #manage { text-align: right; margin-top: 14px; font-size: 14px; }
+    #manage > a { color: #555; text-decoration: underline; }
+    #manage > a:hover { color: #0ac; }
+
+    /* Dialogs */
+    .dialog {
+        border: 10px solid #999; border-radius: 8px;
+        position: fixed; top: 177px; left: 350px;
+        padding: 30px; width: 520px; height: 177px;
+        background: #fff; display: none;
+    }
+    .dialog > .close {
+        position: absolute; top: 0; right: 0;
+        background: #999; border-radius: 0 0 0 8px;
+        width: 20px; height: 18px;
+    }
+    .dialog > .close > a {
+        display: block; width: 100%; height: 100%;
+        text-indent: -900em;
+        background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAsAAAALCAQAAAADpb+tAAAAAXNSR0IArs4c6QAAAAlwSFlzAAALEwAACxMBAJqcGAAAAAd0SU1FB9sCDw87JJ1jSa4AAAAZdEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVBXgQ4XAAAAAmJLR0QA/4ePzL8AAACOSURBVAjXRY87DsMgDEB9/xvYXCRqV6Qg1YmHLIEORVE7NUs7MpTyCxHbe8LPBlxowQm5vYmsXJSFbQha2SYyvMW3XIHsNgZTRIUfYbKAcxImCUfugDhD+lqFWx8HRIYyU5Tfn/G3enIZVpxncvzur3BXHfeQ8qVRtoKzjtLiSYCMZ6hvlc7RYhrkJrQMf3aOucZsZv8eAAAAAElFTkSuQmCC) no-repeat right top;
+    }
+    .dialog > h2 { font-size: 24px; color: #555; margin: 4px 0 20px 0; }
+
+    /* User Editor */
+    .user_editor > p { margin: 19px 0 0 80px; }
+    .user_editor > p > label { color: #555; font-size: 16px; }
+    .user_editor > p > label > input { margin-left: 15px; }
+    .user_editor > button { float: right; margin: 12px 0 0 20px; }
+    .user_editor input[type=text], .user_editor input[type=password] {
+        width: 247px; height: 17px; line-height: 17px; padding: 6px;
+    }
+
+    /* Popups */
+    .popup {
+        padding: 6px; border: 1px solid #999; border-radius: 5px;
+        position: absolute; box-shadow: 2px 2px 8px #999; display: none;
+        background: #fff;
+    }
+    .popup p { margin: 8px 8px 10px; }
+    .popup input[type=text] {
+        width: 43px; height: 13px; line-height: 13px; padding: 3px;
+        margin: 0 10px; text-align: right;
+    }
+    .popup button { float: right; }
+    .popup input[type=radio] { margin-right: 11px; }
+
+    /* Loading & Covering*/
+    #loading {
+        position: fixed; padding: 10px 10px 10px 30px;
+        border: 1px solid #999; border-radius: 5px;
+        box-shadow: 2px 2px 8px #999;
+        height: 16px; line-height: 16px; width: 60px;
+        top: 50%; left: 50%; margin: -18px 0 0 -50px; z-index: 100;
+        background: #fff url(data:image/gif;base64,R0lGODlhEAAQAPIAAP///wAAAMLCwkJCQgAAAGJiYoKCgpKSkiH+GkNyZWF0ZWQgd2l0aCBhamF4bG9hZC5pbmZvACH5BAAKAAAAIf8LTkVUU0NBUEUyLjADAQAAACwAAAAAEAAQAAADMwi63P4wyklrE2MIOggZnAdOmGYJRbExwroUmcG2LmDEwnHQLVsYOd2mBzkYDAdKa+dIAAAh+QQACgABACwAAAAAEAAQAAADNAi63P5OjCEgG4QMu7DmikRxQlFUYDEZIGBMRVsaqHwctXXf7WEYB4Ag1xjihkMZsiUkKhIAIfkEAAoAAgAsAAAAABAAEAAAAzYIujIjK8pByJDMlFYvBoVjHA70GU7xSUJhmKtwHPAKzLO9HMaoKwJZ7Rf8AYPDDzKpZBqfvwQAIfkEAAoAAwAsAAAAABAAEAAAAzMIumIlK8oyhpHsnFZfhYumCYUhDAQxRIdhHBGqRoKw0R8DYlJd8z0fMDgsGo/IpHI5TAAAIfkEAAoABAAsAAAAABAAEAAAAzIIunInK0rnZBTwGPNMgQwmdsNgXGJUlIWEuR5oWUIpz8pAEAMe6TwfwyYsGo/IpFKSAAAh+QQACgAFACwAAAAAEAAQAAADMwi6IMKQORfjdOe82p4wGccc4CEuQradylesojEMBgsUc2G7sDX3lQGBMLAJibufbSlKAAAh+QQACgAGACwAAAAAEAAQAAADMgi63P7wCRHZnFVdmgHu2nFwlWCI3WGc3TSWhUFGxTAUkGCbtgENBMJAEJsxgMLWzpEAACH5BAAKAAcALAAAAAAQABAAAAMyCLrc/jDKSatlQtScKdceCAjDII7HcQ4EMTCpyrCuUBjCYRgHVtqlAiB1YhiCnlsRkAAAOwAAAAAAAAAAAA==) no-repeat 10px 50%;
+    }
+    #covering {
+        position: fixed; background: #333; opacity: .3;
+        top: 0; left: 0; width: 100%; height: 100%;
+    }
+
+    /* Footer */
+    #footer { clear: both; padding: 45px 108px; color: #999; font-size: 90%; }
+    #footer a { color: #999; }
+    #footer a:hover { text-decoration: underline; }
+
+    /* jQuery UI */
+    /* TimePicker */
+    .ui-timepicker-div .ui-widget-header { margin-bottom: 8px; }
+    .ui-timepicker-div dl { text-align: left; }
+    .ui-timepicker-div dl dt { height: 25px; }
+    .ui-timepicker-div dl dd { margin: -25px 0 10px 65px; }
+    .ui-timepicker-div td { font-size: 90%; }
+</style>
+</head>
+<body>
+<div id="loading">加载中...</div>
+<div id="page">
+<div id="header"><h1>按时吃饭</h1></div>
+<ul id="user_list">
+    <li><a href="#user/add">添加用户</a></li>
+</ul>
+<div id="main">
+    <div class="plan_editor" id="add_plan">
+        <textarea name="status" rows="4" cols="37"></textarea><div>140</div>
+        <input name="date" readonly="readonly" type="text" value="2011-02-15" />
+        <input name="time" readonly="readonly" type="text" value="23:00" />
+        <input name="interval_text" readonly="readonly" type="text" value="不循环" />
+        <button>添加计划</button>
+        <input name="interval" type="hidden" value="0" />
+    </div>
+    <div id="stat">
+        <h2>共 <span>0</span> 个计划</h2>
+        <p>已执行 <span class="execed">0</span> / 待执行 <span class="waiting">0</span> / 失败 <span class="error">0</span></p>
+    </div>
+    <div id="plans">
+    </div>
+    <div id="manage">
+        <a href="#user/settings">帐号选项</a>
+    </div>
+</div>
+<div id="covering"></div>
+<div id="dialog_adduser" class="dialog user_editor">
+    <h2>添加饭否帐号</h2>
+    <div class="close"><a href="#">关闭</a></div>
+    <p><label>帐号<input name="userid" type="text" /></label></p>
+    <p><label>密码<input name="password" type="password" /></label></p>
+    <button>添加</button>
+</div>
+<div id="dialog_editplan" class="dialog plan_editor">
+    <h2>编辑计划</h2>
+    <div class="close"><a href="#">关闭</a></div>
+    <textarea name="status" rows="4" cols="37"></textarea><div>140</div>
+    <input name="date" readonly="readonly" type="text" value="2011-02-15" />
+    <input name="time" readonly="readonly" type="text" value="23:00" />
+    <input name="interval_text" readonly="readonly" type="text" value="不循环" />
+    <button>完成编辑</button>
+    <input name="interval" type="hidden" value="0" />
+</div>
+<div id="dialog_edituser" class="dialog user_editor">
+    <h2>帐号选项</h2>
+    <div class="close"><a href="#">关闭</a></div>
+    <p><label>帐号<input name="userid" type="text" /></label></p>
+    <p><label>密码<input name="password" type="password" /></label></p>
+    <button>删除</button>
+    <button>修改</button>
+</div>
+<div id="popup_interval" class="popup">
+    <p><label><input name="interval_type" type="radio" value="no" checked="checked" />不循环</label></p>
+    <p><label><input name="interval_type" type="radio" value="yes" />循环：</label>每<input type="text" name="number" /><select name="unit">
+    	<option value="1">分钟</option>
+    	<option value="60" selected="selected">小时</option>
+    	<option value="1440">天</option>
+    	<option value="10080">周</option>
+    </select></p>
+    <button>确定</button>
+</div>
+<div id="footer">
+    &copy;2010 @<a href="http://fanfou.com/upsuper">upsuper</a>,
+    Designed by @<a href="http://fanfou.com/anegie">Kevin</a>.
+    Some rights reserved.
+</div>
+</div>
+</body>
+</html>

@@ -5,16 +5,18 @@ import base64
 import urllib
 import logging
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from django.utils import simplejson as json
 from google.appengine.api import urlfetch
 
 from data import User, Plan
+from common import next_time
 from result import PlanResult
 
 # 初始化
-# 获取当前时间
+# 获取时间
 now = datetime.now()
+five_min = timedelta(minutes=5)
 # 初始化异步发送列表
 requests = []
 
@@ -24,6 +26,10 @@ def exec_plan(plan):
     # 读取计划信息
     user = plan.user
     user_id = user.user_id.encode('utf8')
+    if user_id in sent_user:
+        return
+    else:
+        sent_user.add(user_id)
     password = base64.b64decode(user.password)
     status = plan.status
 
@@ -39,10 +45,10 @@ def exec_plan(plan):
             }
     body = urllib.urlencode({
             'status': status.encode('utf8'),
-            'source': 'timer',
+            'source': 'ontime',
             })
 
-    # 执行移步发送
+    # 执行异步发送
     rpc = urlfetch.create_rpc(deadline=10)
     urlfetch.make_fetch_call(rpc,
             'http://api.fanfou.com/statuses/update.json',
@@ -56,24 +62,38 @@ print
 # 寻找需要被发送的消息
 plans = Plan.all().filter('exec_time =', None)
 plans = plans.filter('plan_time <=', now).order('plan_time')
+sent_user = set()
 for plan in plans:
-    exec_plan(plan)
+    try:
+        exec_plan(plan)
+    except:
+        pass
 
 # 等待所有任务完成
 for plan, rpc in requests:
     try:
         resp = rpc.get_result()
     except Exception, e:
-        # 将错误保存以备查验
         logging.error('error %s occurred at %s' %
                 (repr(e), plan.key().id()))
         # 标记为执行失败
-        plan.exec_time = None
         plan.result = int(PlanResult.failed)
+        # 如果连续五分钟尝试失败，则不再尝试
+        if now - plan.plan_time < five_min:
+            plan.exec_time = None
+        elif plan.interval:
+            plan.plan_time = next_time(plan.plan_time, plan.interval)
+            plan.exec_time = None
     else:
+        if plan.interval:
+            plan.exec_time = None
         # 检查执行结果
         if resp.status_code == 200:
-            plan.result = int(PlanResult.success)
+            if plan.interval:
+                # 得到当前时间之后的下一次执行时间
+                plan.plan_time = next_time(plan.plan_time, plan.interval)
+            else:
+                plan.result = int(PlanResult.success)
         elif resp.status_code == 401:
             plan.result = int(PlanResult.unauthorized)
         else:

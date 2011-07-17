@@ -1,0 +1,516 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+<head>
+	<meta http-equiv="Content-Type" content="text/html;charset=UTF-8" />
+	<title>按时吃饭</title>
+    <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.4.4/jquery.min.js"></script>
+    <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.8.7/jquery-ui.min.js"></script>
+    <script type="text/javascript" src="static/jquery-ui-timepicker.js"></script>
+    <link rel="stylesheet" href="http://ajax.googleapis.com/ajax/libs/jqueryui/1.8.7/themes/start/jquery-ui.css" type="text/css" media="all" />
+    <script type="text/javascript">
+        var default_users = {{ default_users }};
+        var default_plans = {{ default_plans }};
+        var current_user_id = '';
+        function listUsers(users) {
+            var $list = $('#user_list');
+            $('li.user').remove();
+            var $add_user = $('li#add_user');
+            for (var i in users) {
+                var user = users[i];
+                var $li = $('<li>');
+                $li.attr('id', 'user_' + user.user_id);
+                $li.addClass('user')
+                var $em = $('<em>');
+                $em.text(user.user_id);
+                $li.text(user.name);
+                $li.append($em);
+                $li.click(function(user_id) {
+                    return function() {
+                        $.get('/plans/' + user_id, function(data) {
+                            switchUser(user_id, data);
+                        }, 'json');
+                    };
+                }(user.user_id));
+                $li.insertBefore($add_user);
+            }
+        }
+        function switchUser(user_id, plans) {
+            $('#user_list li.user.selected').removeClass('selected');
+            $('#dialog_edituser').hide();
+            $(document.getElementById('user_' + user_id)).addClass('selected');
+            current_user_id = user_id
+            var $plans = $('#plans');
+            $plans.empty();
+            var execed = 0, waiting = 0, error = 0;
+            for (var i = 0; i < plans.length; ++i) {
+                var plan = plans[i];
+                var $div = $('<div>');
+                $div.attr('id', 'plan_' + plan.plan_id);
+                $div.addClass('plan');
+                var $status = $('<p>');
+                $status.addClass('status');
+                $status.text(plan.status);
+                $div.append($status);
+                var $result = $('<p>');
+                $result.addClass('result');
+                if (plan.result === null || plan.exec_time == null) {
+                    $div.addClass('waiting');
+                    ++waiting;
+                    $result.html('将于 <span class="time">' +
+                            plan.plan_time + '</span> 发送');
+                } else if (plan.result !== 0) {
+                    $div.addClass('error');
+                    ++error;
+                    switch (plan.result) {
+                        case 1: reason = '用户名或密码错误'; break;
+                        default: reason = '未知错误'; break;
+                    }
+                    $result.html('于 <span class="time">' +
+                            plan.exec_time + '</span> 发送时发生错误：' +
+                            reason);
+                } else {
+                    $div.addClass('execed');
+                    ++execed;
+                    $result.html('已于 <span class="time">' +
+                            plan.exec_time + '</span> 发送');
+                }
+                $div.append($result);
+                var $manage = $('<p>');
+                $manage.addClass('manage');
+                if (! plan.exec_time) {
+                    var $edit = $('<a href="javascript: void(0)" id="edit_' +
+                            plan.plan_id + '">编辑</a>');
+                    $edit.click(function(plan, user_id) {
+                        return function() {
+                            $('.dialog').hide();
+                            $('#dialog_editplan #edit_status').val(plan.status);
+                            var plan_time = plan.plan_time.split(' ');
+                            $('#dialog_editplan #edit_date_select').val(plan_time[0]);
+                            $('#dialog_editplan #edit_time_select').val(plan_time[1]);
+                            $('#dialog_editplan #edit_plan').unbind('click');
+                            $('#dialog_editplan #edit_plan').click(function() {
+                                $('#dialog_editplan').hide();
+                                alert(plan.plan_id);
+                                $.post('/plan/edit', {
+                                    'plan_id': plan.plan_id, 
+                                    'status': $('textarea#edit_status').val(),
+                                    'plan_time': $('#edit_date_select').val() + ' ' +
+                                                 $('#edit_time_select').val()
+                                }, function(data) {
+                                   switchUser(user_id, data);
+                                }, 'json');
+                            });
+                            $('#dialog_editplan').show();
+                        };
+                    }(plan, current_user_id));
+                    $edit.appendTo($manage);
+                }
+                var $delete = $('<a href="javascript: void(0)" id="delete_' +
+                                plan.plan_id + '">删除</a>');
+                $delete.click(function(plan_id) {
+                    return function() {
+                        $.post('/plan/delete', { 'plan_id': plan_id }, function(data) {
+                            switchUser(user_id, data);
+                        }, 'json');
+                    };
+                }(plan.plan_id));
+                $delete.appendTo($manage);
+                $div.append($manage);
+                $plans.append($div);
+            }
+            $('#count').text(plans.length);
+            $('#execed').text(execed);
+            $('#waiting').text(waiting);
+            $('#error').text(error);
+        }
+        $(function() {
+            /* 初始化 */
+            $('a[href=#]').attr('href', 'javascript: void(0)');
+            var $status_tip = $('#status_tip');
+            var $edit_status_tip = $('#edit_status_tip');
+            var $status = $('textarea#status');
+            var $edit_status = $('textarea#edit_status');
+            setInterval(function() {
+                var delta = 140 - $status.val().length;
+                $status_tip.text(delta);
+                var delta = 140 - $edit_status.val().length;
+                $edit_status_tip.text(delta);
+            }, 50);
+
+            /* 初始化各控件事件 */
+            $('.dialog .close').click(function() {
+                $(this).parent('.dialog').hide();
+            });
+            $('#add_user').click(function() {
+                $('.dialog').hide();
+                $('#dialog_adduser #user_id').val('');
+                $('#dialog_adduser #password').val('');
+                $('#dialog_adduser').show();
+            });
+            $('button#add_user_button').click(function() {
+                $.post('/user/add', {
+                    user_id: $('#user_id').val(),
+                    password: $('#password').val()
+                }, function(data) {
+                    if (data.error) {
+                        alert(data.reason);
+                    } else {
+                        listUsers(data.users);
+                        switchUser(data.user_id, data.plans);
+                        $('#main').show();
+                        $('#dialog_adduser').hide();
+                    }
+                }, 'json');
+            });
+            $('button#add_plan').click(function() {
+                $.post('/plan/add', {
+                    'user_id': current_user_id, 
+                    'status': $('textarea#status').val(),
+                    'plan_time': $('#date_select').val() + ' ' +
+                                 $('#time_select').val()
+                }, function(data) {
+                    switchUser(current_user_id, data);
+                }, 'json');
+                $('textarea#status').val('');
+            });
+            $('#edit_user').click(function() {
+                $('.dialog').hide();
+                $('#dialog_edituser #edit_user_id').val(current_user_id);
+                $('#dialog_edituser #edit_password').val('');
+                $('#dialog_edituser').show();
+            });
+            $('#edit_user_button').click(function() {
+                $.post('/user/edit', {
+                    old_user_id: current_user_id,
+                    user_id: $('#edit_user_id').val(),
+                    password: $('#edit_password').val()
+                }, function(data) {
+                    if (data.error) {
+                        alert(data.reason);
+                    } else {
+                        listUsers(data.users);
+                        switchUser(data.user_id, data.plans);
+                        $('#dialog_edituser').hide();
+                    }
+                }, 'json');
+            });
+            $('#delete_user_button').click(function() {
+                var result = confirm('删除后所有计划数据都将被永久删除，确认删除这个账户吗？');
+                if (! result) return;
+                $.post('/user/delete', { user_id: current_user_id }, function(data) {
+                    listUsers(data.users);
+                    if (data.users.length) {
+                        switchUser(data.users[0].user_id, data.plans);
+                        $('#main').show();
+                    } else {
+                        $('#main').hide();
+                        $('.dialog').hide();
+                        $('#dialog_adduser').show();
+                    }
+                }, 'json');
+                $('#dialog_edituser').hide();
+            });
+            $('#date_select').val({{ default_date }});
+            $('#date_select').datepicker({
+                dateFormat: 'yy-mm-dd',
+                minDate: new Date(),
+                monthNames: ['01月', '02月', '03月', '04月', '05月',
+                             '06月', '07月', '08月', '09月', '10月',
+                             '11月', '12月'],
+                dayNamesMin: ['日', '一', '二', '三', '四', '五', '六'],
+                showMonthAfterYear: true,
+                yearSuffix: '年'
+            });
+            $('#time_select').val({{ default_time }});
+            $('#time_select').timepicker({
+                timeOnlyTitle: '选择时间',
+                timeText: '时间',
+                hourText: '时',
+                minuteText: '分',
+                currentText: '现在',
+                closeText: '确定'
+            });
+            $('#edit_date_select').datepicker({
+                dateFormat: 'yy-mm-dd',
+                minDate: new Date(),
+                monthNames: ['01月', '02月', '03月', '04月', '05月',
+                             '06月', '07月', '08月', '09月', '10月',
+                             '11月', '12月'],
+                dayNamesMin: ['日', '一', '二', '三', '四', '五', '六'],
+                showMonthAfterYear: true,
+                yearSuffix: '年'
+            });
+            $('#edit_time_select').timepicker({
+                timeOnlyTitle: '选择时间',
+                timeText: '时间',
+                hourText: '时',
+                minuteText: '分',
+                currentText: '现在',
+                closeText: '确定'
+            });
+
+            /* 初始化各列表 */
+            listUsers(default_users);
+            if (default_users.length) {
+                switchUser(default_users[0].user_id, default_plans);
+                $('#main').show();
+            } else {
+                $('#main').hide();
+                $('.dialog').hide();
+                $('#dialog_adduser').show();
+            }
+        });
+    </script>
+    <style type="text/css">
+        /* Reset */
+        html, body, div, span, h1, h2,
+        p, a, em, ol, ul, li,
+        textarea, input, button {
+            margin: 0; padding: 0; border: 0; outline: 0;
+            font: normal 100% sans-serif; vertical-align: baseline;
+            background: transparent;
+        }
+        textarea { resize: none; }
+        a { text-decoration: none; }
+        body{ line-height: 1; }
+        ol, ul, li { list-style: none; }
+        :focus { outline: 0; }
+
+        /* Common style */
+        button {
+            color: #555; font-size: 16px; cursor: pointer;
+            width: 108px; height: 39px;
+            background: url(static/images.png) no-repeat -240px -72px;
+        }
+        button:active {
+            background: url(static/images.png) no-repeat -348px -72px;
+        }
+        .dialog {
+            position: fixed; display: none;
+            top: 177px; left: 350px;
+            padding: 30px;
+            width: 520px; height: 177px;
+            background: url(static/dialog.png) no-repeat;
+        }
+        .dialog .close {
+            cursor: pointer; position: absolute;
+            text-indent: -900em;
+            top: 0; right: 0;
+            width: 30px; height: 28px;
+        }
+        .dialog h2 {
+            font-size: 24px; color: #555;
+            margin: 4px 0 20px 0;
+        }
+        .popup {
+            border: 1px solid #999;
+            box-shadow: 2px 5px 10px rgba(0,0,0,.5);
+            -webkit-box-shadow: 2px 5px 10px rgba(0,0,0,.5);
+            -moz-box-shadow: 2px 5px 10px rgba(0,0,0,.5);
+            border-radius: 5px;
+            -webkit-border-radius: 5px;
+            -moz-border-radius: 5px;
+            background-color: rgba(255,255,255,.9);
+            position: absolute;
+            padding: 16px 16px 5px;
+            display: none;
+        }
+        .popup p {
+            font-size: 16px; line-height: 24px; height: 24px;
+            margin-bottom: 13px; vertical-align: top;
+        }
+        .popup label { margin-left: 10px; }
+        .popup input { height: 20px; }
+        input[type=text], input[type=password] {
+            background: url(static/images.png) no-repeat -240px -111px;
+            width: 247px; height: 17px; line-height: 17px;
+            padding: 6px;
+        }
+    
+        /* Page */
+        body { font-size: 14px; line-height: 22px; overflow-y: scroll; }
+        #page { width: 662px; margin: 0 auto; }
+
+        /* Header */
+        #header { width: 100%; margin: 53px 0 34px; }
+        #header h1 { text-indent: -900em; height: 65px; background: url(static/logo.gif) no-repeat 106px 0; }
+    
+        /* User List */
+        #user_list { float: left; width: 102px; border-right: 10px solid #999; padding-bottom: 140px; }
+        #user_list li { margin-bottom: 5px; background: url(static/images.png) no-repeat; cursor: pointer; overflow: hidden; }
+        #user_list li.user { background-position: -102px -72px; height: 43px; color: #aaa; font-weight: bold; padding: 15px 10px; }
+        #user_list li.user em { font-weight: normal; display: block; margin-top: 10px; font-size: 13px; }
+        #user_list li.user.selected, #user_list li.user:hover { background-position: 0 -72px; color: #fff; }
+        #user_list li#add_user { background-position: -204px -72px; width: 36px; height: 36px; margin-left: 61px; text-indent: -900em; }
+        #user_list li#add_user:hover { background-position: -204px -108px; }
+
+        /* Main area */
+        #main { margin: 0 0 0 122px; }
+        
+        /* New plan */
+        #new_plan #status { background: url(static/images.png) no-repeat left top; padding: 8px 10px; width: 520px; height: 56px; overflow: hidden; }
+        #new_plan #status_tip { margin: -22px 0 8px 500px; color: #555; height: 22px; line-height: 22px; text-align: center; }
+        #new_plan .newplan {
+            float: left; height: 25px; padding: 0 0 0 30px; margin-right: 16px; 
+            background: url(static/images.png) no-repeat;
+            line-height: 30px; font-size: 16px; color: #999; cursor: pointer;
+        }
+        #new_plan #date_select { background-position: -540px 0px; width: 100px; }
+        #new_plan #date_select:hover { background-position: -540px -25px; }
+        #new_plan #time_select { background-position: -540px -50px; width: 50px; }
+        #new_plan #time_select:hover { background-position: -540px -75px; }
+        #new_plan #interval_div { background-position: -540px -100px; width: 50px; line-height: 25px; }
+        #new_plan #interval_div:hover { background-position: -540px -125px; }
+        #new_plan button#add_plan { float: right; }
+
+        /* Stat */
+        #stat { margin-top: 78px; padding-bottom: 10px; border-bottom: 1px solid #ddd; }
+        #stat #stat_count { font-size: 18px; color: #555; }
+        #stat #stat_count #count { color: #00a3cc; font-weight: bold; }
+        #stat #stat_detail { float: right; margin-top: -18px; color: #555; }
+        #stat #stat_detail #execed { color: #999; font-weight: bold; }
+        #stat #stat_detail #waiting { color: #00a3cc; font-weight: bold; }
+
+        /* Plans */
+        #plans { color: #333; }
+        #plans .plan { padding: 11px 7px 13px; border-bottom: 1px solid #ddd; }
+        #plans .plan .status { line-height: 24px; }
+        #plans .plan .result { font-size: 12px; margin-top: 8px; }
+        #plans .plan.waiting .result { color: #00a3cc; }
+        #plans .plan.waiting .result span { font-weight: bold; }
+        #plans .plan.execed .result { color: #999; }
+        #plans .plan.execed .result span { font-weight: bold; }
+        #plans .plan .manage { float: right; margin-top: -14px; font-size: 12px; }
+        #plans .plan .manage a { text-decoration: underline; margin-left: .5em; }
+        #plans .plan.waiting .manage a { color: #00a3cc; }
+        #plans .plan.execed .manage a { color: #999; }
+        
+        /* Manage */
+        #manage { text-align: right; margin-top: 14px; font-size: 14px; }
+        #manage a { color: #555; text-decoration: underline; }
+        #manage a:hover { color: #00a3cc; }
+
+        /* Popups */
+        #popup_interval {
+            left: 50%; top: 260px; margin-left: 30px;
+        }
+        #popup_interval #interval_val {
+            border: 1px solid #999; margin: 0 10px;
+            width: 40px; text-align: right;
+            border-radius: 5px;
+            -moz-border-radius: 5px;
+            -webkit-border-radius: 5px;
+        }
+        #popup_interval button { float: right; }
+
+        /* Dialogs */
+        /* Add/Edit User */
+        #dialog_adduser p, #dialog_edituser p { margin: 19px 0 0 80px; }
+        #dialog_adduser label, #dialog_edituser label { color: #555; font-size: 16px; margin-right: 15px; }
+        #dialog_adduser button, #dialog_edituser button { float: right; margin: 12px 0 0 20px; }
+
+        /* Edit Plan */
+        #dialog_editplan #edit_status { background: url(static/images.png) no-repeat left top; padding: 8px 10px; width: 520px; height: 56px; overflow: hidden; margin-left: -10px; }
+        #dialog_editplan #edit_status_tip { margin: -22px -10px 8px 490px; color: #555; height: 22px; line-height: 22px; text-align: center; }
+        #dialog_editplan #edit_date_select, #dialog_editplan #edit_time_select {
+            float: left; height: 25px; padding: 0 0 0 30px; margin-right: 16px; 
+            background: url(static/images.png) no-repeat;
+            line-height: 30px; font-size: 16px; color: #999; cursor: pointer;
+        }
+        #dialog_editplan #edit_date_select { background-position: -540px 0px; width: 100px; margin-left: -10px; }
+        #dialog_editplan #edit_date_select:hover { background-position: -540px -25px; }
+        #dialog_editplan #edit_time_select { background-position: -540px -50px; width: 50px; }
+        #dialog_editplan #edit_time_select:hover { background-position: -540px -75px; }
+        #dialog_editplan button#edit_plan { float: right; }
+
+        /* Footer */
+        #footer { clear: both; padding: 45px 108px; color: #999; font-size: 90%; }
+        #footer a { color: #999; }
+        #footer a:hover { text-decoration: underline; }
+
+        /* jQuery UI */
+        /* TimePicker */
+        .ui-timepicker-div .ui-widget-header { margin-bottom: 8px; }
+        .ui-timepicker-div dl { text-align: left; }
+        .ui-timepicker-div dl dt { height: 25px; }
+        .ui-timepicker-div dl dd { margin: -25px 0 10px 65px; }
+        .ui-timepicker-div td { font-size: 90%; }
+
+        /* */
+    </style>
+</head>
+<body>
+    <div id="page">
+        <div id="header"><h1>按时吃饭</h1></div>
+        <ul id="user_list">
+            <li id="add_user">添加用户</li>
+        </ul>
+        <div id="main">
+            <div id="new_plan">
+                <textarea id="status" name="status"></textarea>
+                <div id="status_tip">140</div>
+                <input id="date_select" class="newplan" value="" readonly="readonly" />
+                <input id="time_select" class="newplan" value="" readonly="readonly" />
+                <input id="interval_time" value="" type="hidden" />
+                <div id="interval_div" class="newplan">不循环</div>
+                <button id="add_plan">添加计划</button>
+            </div>
+            <div id="stat">
+                <p id="stat_count">共 <span id="count">2</span> 个计划</p>
+                <p id="stat_detail">
+                    已执行 <span id="execed">1</span> /
+                    待执行 <span id="waiting">1</span> /
+                    失败 <span id="error">0</span>
+                </p>
+            </div>
+            <div id="plans">
+            </div>
+            <div id="manage">
+                <!--<a href="#" id="delete_all">删除全部</a>-->
+                <a href="#" id="edit_user">帐号选项</a>
+            </div>
+        </div>
+        <div class="dialog" id="dialog_adduser">
+            <h2>添加饭否帐号</h2>
+            <div class="close">关闭</div>
+            <p><label for="user_id">帐号</label><input type="text" id="user_id" /></p>
+            <p><label for="password">密码</label><input type="password" id="password" /></p>
+            <button id="add_user_button">添加</button>
+        </div>
+        <div class="dialog" id="dialog_editplan">
+            <h2>编辑计划</h2>
+            <div class="close">关闭</div>
+            <textarea id="edit_status"></textarea>
+            <div id="edit_status_tip">140</div>
+            <input id="edit_date_select" value="" readonly="readonly" />
+            <input id="edit_time_select" value="" readonly="readonly" />
+            <input id="interval_time" value="" type="hidden" />
+            <div id="interval_div" class="newplan">不循环</div>
+            <button id="edit_plan">完成编辑</button>
+        </div>
+        <div class="dialog" id="dialog_edituser">
+            <h2>帐号选项</h2>
+            <div class="close">关闭</div>
+            <p><label for="edit_user_id">帐号</label><input type="text" id="edit_user_id" /></p>
+            <p><label for="edit_password">密码</label><input type="password" id="edit_password" /></p>
+            <button id="delete_user_button">删除</button>
+            <button id="edit_user_button">修改</button>
+        </div>
+        <div class="popup" id="popup_interval">
+            <p><input type="radio" name="interval_type" id="no_interval" value="no" checked="checked" /><label for="no_interval">不循环</label></p>
+            <p><input type="radio" name="interval_type" id="use_interval" value="yes" /><label for="use_interval">循环</label>：每<input id="interval_val" value="1" /><select id="interval_unit">
+                <option value="minute">分钟</option>
+                <option value="hour" selected="selected">小时</option>
+                <option value="day">天</option>
+                <option value="week">周</option>
+            </select></p>
+            <button>确定</button>
+        </div>
+        <div id="footer">
+            &copy;2010 @<a href="http://fanfou.com/upsuper">upsuper</a>,
+            Designed by @<a href="http://fanfou.com/anegie">Kevin</a>.
+            Some rights reserved.
+        </div>
+    </div>
+</body>
+</html>

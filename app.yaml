@@ -1,20 +1,30 @@
 application: fanfou-timer
-version: 1
+version: 2
 runtime: python
 api_version: 1
 
 handlers:
 - url: /
-  script: main.py
-  login: required
-
-- url: /users(/.*)?
-  script: users.py
-  login: required
-
-- url: /plans(/.*)?
-  script: plans.py
+  static_files: mainpage.html
+  upload: mainpage.html
   login: required
 
 - url: /timer
   script: timer.py
+
+- url: /fix
+  script: fix.py
+  login: admin
+
+- url: /static
+  static_dir: static
+  expiration: 7d
+
+- url: /favicon.ico
+  static_files: static/favicon.ico
+  upload: favicon.ico
+  expiration: 7d
+
+- url: /.*
+  script: main.py
+  login: required
