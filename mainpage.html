@@ -451,6 +451,19 @@
     /* Header */
     #header { width: 100%; margin: 53px 0 34px; }
     #header > h1 { text-indent: -900em; height: 65px; background: url(static/logo.png) no-repeat 106px 0; }
+    #tips {
+        position: absolute;
+        background: #ffff88;
+        width: 230px; height: 60px;
+        line-height: 15px;
+        top: 50px; left: 50%;
+        padding: 10px;
+        font-size: 12px;
+        margin-left: 80px;
+        color: #666;
+    }
+    #tips a { color: #999; }
+    #tips a:hover { text-decoration: underline; }
 
     /* User List */
     #user_list { float: left; width: 102px; border-right: 10px solid #999; padding-bottom: 140px; }
@@ -595,7 +608,10 @@
 <body>
 <div id="loading">加载中...</div>
 <div id="page">
-<div id="header"><h1>按时吃饭</h1></div>
+<div id="header">
+    <h1>按时吃饭</h1>
+    <div id="tips"><strong>新版的按时吃饭已经发布</strong>，浏览速度更快，登入更方便，欢迎试用：<a href="http://fanfou.upsuper.org/ontime">点击此处</a>。在新版完成测试后，我们会将旧版的数据自动转移到新版上。</div>
+</div>
 <ul id="user_list">
     <li><a href="#user/add">添加用户</a></li>
 </ul>
